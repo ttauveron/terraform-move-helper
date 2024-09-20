@@ -37,6 +37,8 @@ jobs:
         asset_path: dist/terraform-move-helper  # Linux binary
         asset_name: terraform-move-helper_linux
         asset_content_type: application/octet-stream
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
     - name: Upload the executable to release (Windows)
       if: ${{ runner.os == 'Windows' }}
@@ -46,6 +48,8 @@ jobs:
         asset_path: dist/terraform-move-helper.exe  # Windows executable
         asset_name: terraform-move-helper_windows.exe
         asset_content_type: application/octet-stream
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
     - name: Upload the executable to release (macOS)
       if: ${{ runner.os == 'macOS' }}
@@ -55,3 +59,5 @@ jobs:
         asset_path: dist/terraform-move-helper  # macOS binary
         asset_name: terraform-move-helper_macos
         asset_content_type: application/octet-stream
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
