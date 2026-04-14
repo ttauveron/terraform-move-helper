@@ -669,6 +669,67 @@ def test_main_handles_iam_role_keys_with_nested_square_brackets(tmp_path):
     }
 
 
+def test_main_reports_ambiguous_matches_without_generating_commands(
+    tmp_path,
+    capsys,
+):
+    plan_path = write_plan(
+        tmp_path,
+        [
+            resource_change(
+                'module.files["old-a"].local_file.default',
+                "local_file",
+                ["delete"],
+                before={
+                    "file_permission": "0644",
+                    "directory_permission": "0755",
+                    "content": "same-template",
+                },
+            ),
+            resource_change(
+                'module.files["old-b"].local_file.default',
+                "local_file",
+                ["delete"],
+                before={
+                    "file_permission": "0644",
+                    "directory_permission": "0755",
+                    "content": "same-template",
+                },
+            ),
+            resource_change(
+                'module.files["new-a"].local_file.default',
+                "local_file",
+                ["create"],
+                after={
+                    "file_permission": "0644",
+                    "directory_permission": "0755",
+                    "content": "same-template",
+                },
+            ),
+            resource_change(
+                'module.files["new-b"].local_file.default',
+                "local_file",
+                ["create"],
+                after={
+                    "file_permission": "0644",
+                    "directory_permission": "0755",
+                    "content": "same-template",
+                },
+            ),
+        ],
+    )
+    output_path = tmp_path / "move_commands.sh"
+
+    terraform_move_helper.main(str(plan_path), str(output_path))
+
+    assert output_commands(output_path) == []
+    output = capsys.readouterr().out
+    assert "Ambiguous Matches:" in output
+    assert 'destroyed: module.files["old-a"].local_file.default' in output
+    assert 'module.files["new-a"].local_file.default' in output
+    assert 'module.files["new-b"].local_file.default' in output
+
+
 def test_main_handles_nested_modules_and_punctuation_in_for_each_keys(tmp_path):
     source_address = (
         'module.env["prod.eu-west-1"].'

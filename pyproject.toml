@@ -4,10 +4,7 @@ version = "0.0.1"
 description = "CLI helper to match Terraform plan create/delete changes and generate state move commands."
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = [
-    "jellyfish==1.1.0",
-    "scikit-learn",
-]
+dependencies = []
 
 [dependency-groups]
 build = [
