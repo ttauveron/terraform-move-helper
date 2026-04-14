@@ -100,12 +100,8 @@ This tool is especially useful for teams or individuals managing large-scale Ter
 
 ### Prerequisites
 
-- Python 3.7+
-- Install required Python dependencies by running:
-
-```bash
-pip install -r requirements.txt
-```
+- Python 3.9
+- [uv](https://docs.astral.sh/uv/)
 
 ### Clone the Repository
 
@@ -116,12 +112,10 @@ cd terraform-move-helper
 
 ### Setting Up the Environment
 
-You can create a virtual environment to manage dependencies:
+Create the virtual environment and install dependencies with uv:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Usage
@@ -133,19 +127,19 @@ terraform-move-helper processes a Terraform plan in JSON format, matches destroy
 To use terraform-move-helper, run the following command:
 
 ```bash
-python terraform-move-helper.py --plan <path_to_tfplan.json> --output <output_file>
+uv run python terraform-move-helper.py --plan <path_to_tfplan.json> --output <output_file>
 ```
 
 To generate the tfplan.json file, run the following command in your terraform project:
 
 ```bash
-terraform plan -out=tfplan; terraform show -json tfplan | jq  > tfplan.json
+terraform plan -out=tfplan && terraform show -json tfplan | jq > tfplan.json
 ```
 
 ### Example
 
 ```bash
-python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
+uv run python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
 ```
 
 This will:
@@ -212,7 +206,7 @@ To test the functionality with sample data:
 2. Run terraform-move-helper with the sample plan:
 
     ```bash
-    python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
+    uv run python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
     ```
 
 ### Contributing
