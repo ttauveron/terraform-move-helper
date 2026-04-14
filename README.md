@@ -195,7 +195,13 @@ Terraform move commands have been written to move_commands.sh
 
 ### Testing
 
-To test the functionality with sample data:
+Run the automated test suite with:
+
+```bash
+uv run --group dev pytest
+```
+
+To test the functionality manually with sample data:
 
 1. Create or obtain a sample `tfplan.json` using:
 

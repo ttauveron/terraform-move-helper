@@ -1,4 +1,5 @@
 import difflib
+import shlex
 from collections import defaultdict
 
 from sklearn.feature_extraction.text import CountVectorizer
@@ -107,6 +108,13 @@ def aggregate_scores(scores):
     return weighted_score / total_weight if total_weight > 0 else 0
 
 
+def build_state_mv_command(source_address, destination_address):
+    return (
+        "terraform state mv "
+        f"{shlex.quote(source_address)} {shlex.quote(destination_address)}"
+    )
+
+
 def main(plan_path, output_path):
     plan = load_plan(plan_path)
     resource_changes = get_resource_changes(plan)
@@ -135,12 +143,12 @@ def main(plan_path, output_path):
     best_matches = []
 
     # Set to track unmatched res_destroy and res_create
-    unmatched_res_destroy = set(match_scores.keys())
-    unmatched_res_create = set()
-
-    # Collect all res_create values in a set
-    for creates in match_scores.values():
-        unmatched_res_create.update(creates.keys())
+    unmatched_res_destroy = {
+        res["address"] for res in destroyed_resources
+    }
+    unmatched_res_create = {
+        res["address"] for res in created_resources
+    }
 
     while match_scores:
         best_res_destroy = None
@@ -191,7 +199,7 @@ def main(plan_path, output_path):
     print()
 
     for match in best_matches:
-        command = f"terraform state mv '{match[0]}' '{match[1]}'"
+        command = build_state_mv_command(match[0], match[1])
         move_commands.append(command)
 
     # Write the move commands to the output file

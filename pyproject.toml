@@ -13,6 +13,9 @@ dependencies = [
 build = [
     "pyinstaller",
 ]
+dev = [
+    "pytest",
+]
 
 [tool.uv]
 package = false
