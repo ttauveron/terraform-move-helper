@@ -108,6 +108,43 @@ def test_calculate_match_scores_prefers_matching_resource_state():
     assert assets_score > logs_score
 
 
+def test_calculate_match_scores_normalizes_state_match():
+    destroyed = [
+        resource_change(
+            "aws_s3_bucket.old",
+            "aws_s3_bucket",
+            ["delete"],
+            before={"bucket": "prod-assets", "acl": "private"},
+        )
+    ]
+    created = [
+        resource_change(
+            "module.storage.aws_s3_bucket.assets",
+            "aws_s3_bucket",
+            ["create"],
+            after={"bucket": "prod-assets", "acl": "private"},
+        ),
+        resource_change(
+            "module.storage.aws_s3_bucket.logs",
+            "aws_s3_bucket",
+            ["create"],
+            after={"bucket": "prod-logs", "acl": "private"},
+        ),
+    ]
+
+    scores = terraform_move_helper.calculate_match_scores(destroyed, created)
+
+    exact_state_match = scores["aws_s3_bucket.old"][
+        "module.storage.aws_s3_bucket.assets"
+    ]["state_match"]
+    partial_state_match = scores["aws_s3_bucket.old"][
+        "module.storage.aws_s3_bucket.logs"
+    ]["state_match"]
+
+    assert exact_state_match == 1.0
+    assert 0.0 <= partial_state_match < 1.0
+
+
 def test_main_writes_terraform_state_mv_command(tmp_path, capsys):
     plan_path = write_plan(
         tmp_path,
@@ -138,6 +175,36 @@ def test_main_writes_terraform_state_mv_command(tmp_path, capsys):
         "module.storage.aws_s3_bucket.assets",
     ]
     assert "Terraform move commands have been written" in capsys.readouterr().out
+
+
+def test_main_does_not_write_command_for_low_confidence_match(tmp_path, capsys):
+    plan_path = write_plan(
+        tmp_path,
+        [
+            resource_change(
+                "local_file.old",
+                "local_file",
+                ["delete"],
+                before={"content": "old-content"},
+            ),
+            resource_change(
+                "local_file.new",
+                "local_file",
+                ["create"],
+                after={"content": "new-content"},
+            ),
+        ],
+    )
+    output_path = tmp_path / "move_commands.sh"
+
+    terraform_move_helper.main(str(plan_path), str(output_path))
+
+    assert output_commands(output_path) == []
+    output = capsys.readouterr().out
+    assert "Unmatched Created Resources:" in output
+    assert " - local_file.new" in output
+    assert "Unmatched Destroyed Resources:" in output
+    assert " - local_file.old" in output
 
 
 def test_main_rejects_destroyed_resource_without_created_match(tmp_path, capsys):
@@ -882,6 +949,28 @@ def test_build_state_mv_command_shell_quotes_single_quotes_in_addresses():
         destination_address,
     )
 
+    assert shlex.split(command) == [
+        "terraform",
+        "state",
+        "mv",
+        source_address,
+        destination_address,
+    ]
+
+
+def test_build_state_mv_command_uses_shlex_quote_for_shell_metacharacters():
+    source_address = 'module.files["team file;$(rm -rf /)"].local_file.default'
+    destination_address = 'module.files["team file renamed"].local_file.default'
+
+    command = terraform_move_helper.build_state_mv_command(
+        source_address,
+        destination_address,
+    )
+
+    assert command == (
+        "terraform state mv "
+        f"{shlex.quote(source_address)} {shlex.quote(destination_address)}"
+    )
     assert shlex.split(command) == [
         "terraform",
         "state",
