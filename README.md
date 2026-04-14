@@ -1,13 +1,14 @@
 # terraform-move-helper
 
-**terraform-move-helper** is a CLI tool designed to automate the matching and migration of resources in Terraform plans. It intelligently pairs destroyed and created resources, generates `terraform state mv` commands, and helps streamline the migration of Terraform state during complex refactorings or infrastructure changes.
+**terraform-move-helper** is a CLI tool for reviewing Terraform refactors that appear in a JSON plan as separate `delete` and `create` actions. It conservatively pairs destroyed and created resources, generates `terraform state mv` commands for confident matches, and reports weak or ambiguous candidates for manual review.
 
 
 ## Features
 
-- **Intelligent Matching**: Uses heuristics, such as attribute similarity and address similarity, to match destroyed resources with created ones.
-- **Move Command Generation**: Automatically generates `terraform state mv` commands for matched resources.
-- **Unmatched Resource Reporting**: Identifies and lists resources that don't have a matching counterpart.
+- **Conservative Matching**: Uses exact state fingerprints, unique identity attributes, weighted state similarity, and address context from accepted matches.
+- **Confidence Checks**: Applies minimum score and ambiguity-margin checks before accepting a match.
+- **Move Command Generation**: Generates shell-quoted `terraform state mv` commands for accepted matches.
+- **Review-Oriented Output**: Prints match scores, match reasons, ambiguous candidates, and unmatched resources.
 
 ## **Use Case Example: Refactoring Terraform Infrastructure**
 
@@ -23,10 +24,10 @@ Terraform detects these changes as **"destroy"** and **"create"** operations. Ho
 - Manually determining which destroyed resources match which created resources and writing the `terraform state mv` commands for each pair can be tedious and error-prone.
 
 **Solution:**
-**terraform-move-helper** automates this process by:
+**terraform-move-helper** helps with this process by:
 1. **Parsing the Terraform plan** to find resources that are being destroyed and created.
-2. **Matching destroyed resources with created resources** using heuristics (like attribute and name similarity).
-3. **Generating `terraform state mv` commands** to move the state from the old resource to the new one, preventing unnecessary destruction and recreation of resources.
+2. **Matching destroyed resources with created resources** using state-first heuristics and confidence checks.
+3. **Generating `terraform state mv` commands** for accepted matches, so you can review and run them manually.
 
 ---
 
@@ -61,7 +62,7 @@ When you run `terraform plan`, Terraform will detect this as a **destroy and cre
 - Doing this for every resource in a large refactor is time-consuming and error-prone.
 
 **With terraform-move-helper:**
-- terraform-move-helper will automatically match the destroyed and created resources based on their attributes (e.g., bucket name) and generate the appropriate `terraform state mv` command for you:
+- terraform-move-helper can match the destroyed and created resources based on their state, such as the bucket name, and generate the appropriate `terraform state mv` command for review:
   ```bash
   terraform state mv 'aws_s3_bucket.old_name' 'module.storage.aws_s3_bucket.new_name'
   ```
@@ -89,6 +90,7 @@ This prevents Terraform from destroying the existing bucket and recreating it, s
 - **Accuracy**: Reduces the risk of human error when matching destroyed and created resources.
 - **Prevents Resource Re-creation**: Helps avoid unnecessary resource destruction and recreation, preventing downtime and potential data loss.
 - **Scalability**: Handles large infrastructure refactors, where manually matching resources would be impractical.
+- **Safety**: Refuses to guess when candidates are weak or ambiguous.
 
 ---
 
@@ -100,7 +102,7 @@ This tool is especially useful for teams or individuals managing large-scale Ter
 
 ### Prerequisites
 
-- Python 3.9
+- Python 3.9+
 - [uv](https://docs.astral.sh/uv/)
 
 ### Clone the Repository
@@ -120,7 +122,9 @@ uv sync
 
 ## Usage
 
-terraform-move-helper processes a Terraform plan in JSON format, matches destroyed and created resources, and generates `terraform state mv` commands. 
+terraform-move-helper processes a Terraform plan in JSON format, matches destroyed and created resources, and writes `terraform state mv` commands for confident matches.
+
+Always review the generated commands before running them against real state.
 
 ### Command Line Usage
 
@@ -133,7 +137,8 @@ uv run terraform-move-helper --plan <path_to_tfplan.json> --output <output_file>
 To generate the tfplan.json file, run the following command in your terraform project:
 
 ```bash
-terraform plan -out=tfplan && terraform show -json tfplan | jq > tfplan.json
+terraform plan -out=tfplan
+terraform show -json tfplan > tfplan.json
 ```
 
 ### Example
@@ -150,13 +155,17 @@ This will:
 ### Output
 
 1. **Matched Resources**:
-   - The tool outputs matched resources with a similarity score.
-   - Generates `terraform state mv` commands.
+   - The tool outputs matched resources with a similarity score and match reason.
+   - Match reasons include `exact fingerprint`, `unique identity`, `weighted state`, and `address context`.
+   - Accepted matches are written as `terraform state mv` commands.
 
-2. **Unmatched Resources**:
-   - If there are unmatched resources (destroyed or created), they will be listed.
+2. **Ambiguous Matches**:
+   - If multiple candidates are too close, the tool prints the candidates and does not generate a command for that resource.
 
-3. **Move Command Output**:
+3. **Unmatched Resources**:
+   - Resources without a counterpart, or with only low-confidence candidates, are listed.
+
+4. **Move Command Output**:
    - The `terraform state mv` commands are saved to the specified output file.
 
 ### Handling Mismatches
@@ -180,13 +189,21 @@ Cannot proceed with matching because the numbers don't match.
 ```bash
 Matched Destroyed Resource: module.files["test1"].local_file.default
 With Created Resource: module.files["test1-aaa"].local_file.default
-Total Similarity Score: 0.85
+Total Similarity Score: 1.00
+Match Reason: exact fingerprint
+
+Ambiguous Matches:
+Ambiguous match:
+  destroyed: module.files["test2"].local_file.default
+  candidates:
+    - module.files["test2-a"].local_file.default score=0.82
+    - module.files["test2-b"].local_file.default score=0.81
 
 Unmatched Destroyed Resources:
- - module.files["test2"].local_file.default
+ - module.files["test3"].local_file.default
 
 Unmatched Created Resources:
- - module.files["test3"].local_file.default
+ - module.files["test4"].local_file.default
 
 Terraform move commands have been written to move_commands.sh
 ```
@@ -206,7 +223,8 @@ To test the functionality manually with sample data:
 1. Create or obtain a sample `tfplan.json` using:
 
     ```bash
-    terraform show -json > tfplan.json
+    terraform plan -out=tfplan
+    terraform show -json tfplan > tfplan.json
     ```
 
 2. Run terraform-move-helper with the sample plan:
