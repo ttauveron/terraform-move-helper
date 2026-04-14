@@ -320,6 +320,208 @@ def validate_resource_type_counts(destroyed_by_type, created_by_type):
     raise SystemExit(1)
 
 
+def split_address(address):
+    parts = []
+    current = []
+    bracket_depth = 0
+    quote_char = None
+    escaped = False
+
+    for char in address:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+
+        if quote_char:
+            current.append(char)
+            if char == "\\":
+                escaped = True
+            elif char == quote_char:
+                quote_char = None
+            continue
+
+        if char in {"'", '"'}:
+            current.append(char)
+            quote_char = char
+        elif char == "[":
+            current.append(char)
+            bracket_depth += 1
+        elif char == "]":
+            current.append(char)
+            bracket_depth = max(0, bracket_depth - 1)
+        elif char == "." and bracket_depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+
+    parts.append("".join(current))
+    return parts
+
+
+def common_suffix_length(source_parts, destination_parts):
+    length = 0
+    for source_part, destination_part in zip(
+        reversed(source_parts),
+        reversed(destination_parts),
+    ):
+        if source_part != destination_part:
+            break
+        length += 1
+
+    return length
+
+
+def derive_address_contexts(accepted_matches):
+    source_to_destinations = defaultdict(set)
+    destination_to_sources = defaultdict(set)
+
+    for source_address, destination_address, _score, _reason in accepted_matches:
+        source_parts = split_address(source_address)
+        destination_parts = split_address(destination_address)
+        suffix_length = common_suffix_length(source_parts, destination_parts)
+
+        if (
+            suffix_length < 2
+            or suffix_length >= len(source_parts)
+            or suffix_length >= len(destination_parts)
+        ):
+            continue
+
+        source_prefix = ".".join(source_parts[:-suffix_length])
+        destination_prefix = ".".join(destination_parts[:-suffix_length])
+
+        if not source_prefix or not destination_prefix:
+            continue
+        if source_prefix == destination_prefix:
+            continue
+
+        source_to_destinations[source_prefix].add(destination_prefix)
+        destination_to_sources[destination_prefix].add(source_prefix)
+
+    contexts = {}
+    for source_prefix, destination_prefixes in source_to_destinations.items():
+        if len(destination_prefixes) != 1:
+            continue
+
+        destination_prefix = next(iter(destination_prefixes))
+        if len(destination_to_sources[destination_prefix]) != 1:
+            continue
+
+        contexts[source_prefix] = destination_prefix
+
+    return contexts
+
+
+def apply_address_context(address, source_prefix, destination_prefix):
+    if address == source_prefix:
+        return destination_prefix
+    if address.startswith(f"{source_prefix}."):
+        return f"{destination_prefix}{address[len(source_prefix):]}"
+
+    return None
+
+
+def is_context_candidate_compatible(candidate):
+    return (
+        candidate.comparable_weight >= MINIMUM_WEIGHTED_EVIDENCE
+        and candidate.state_score >= 0.5
+    )
+
+
+def find_address_context_matches(
+    unmatched_destroyed_by_type,
+    unmatched_created_by_type,
+    accepted_matches,
+):
+    contexts = derive_address_contexts(accepted_matches)
+    matches = []
+    used_destroyed = set()
+    used_created = set()
+
+    for resource_type in sorted(unmatched_destroyed_by_type):
+        unmatched_destroyed = unmatched_destroyed_by_type[resource_type]
+        unmatched_created = unmatched_created_by_type.get(resource_type, {})
+
+        for destroyed_address in sorted(unmatched_destroyed):
+            if destroyed_address in used_destroyed:
+                continue
+
+            destroyed = unmatched_destroyed[destroyed_address]
+            context_candidates = []
+
+            for source_prefix, destination_prefix in sorted(
+                contexts.items(),
+                key=lambda item: (-len(item[0]), item[0]),
+            ):
+                candidate_address = apply_address_context(
+                    destroyed_address,
+                    source_prefix,
+                    destination_prefix,
+                )
+
+                if candidate_address is None:
+                    continue
+                if candidate_address not in unmatched_created:
+                    continue
+                if candidate_address in used_created:
+                    continue
+
+                candidate = build_candidate(
+                    destroyed,
+                    unmatched_created[candidate_address],
+                )
+                if is_context_candidate_compatible(candidate):
+                    context_candidates.append(candidate)
+
+            if len(context_candidates) != 1:
+                continue
+
+            candidate = context_candidates[0]
+            matches.append((
+                candidate.destroyed,
+                candidate.created,
+                candidate.final_score,
+                "address context",
+            ))
+            used_destroyed.add(candidate.destroyed.address)
+            used_created.add(candidate.created.address)
+
+    return matches
+
+
+def accept_context_matches(
+    matches,
+    unmatched_destroyed_by_type,
+    unmatched_created_by_type,
+    accepted_matches,
+):
+    accepted = 0
+
+    for destroyed, created, score, reason in matches:
+        unmatched_destroyed = unmatched_destroyed_by_type[destroyed.resource_type]
+        unmatched_created = unmatched_created_by_type[created.resource_type]
+
+        if (
+            destroyed.address not in unmatched_destroyed
+            or created.address not in unmatched_created
+        ):
+            continue
+
+        accepted_matches.append((
+            destroyed.address,
+            created.address,
+            score,
+            reason,
+        ))
+        del unmatched_destroyed[destroyed.address]
+        del unmatched_created[created.address]
+        accepted += 1
+
+    return accepted
+
+
 def build_candidate(destroyed, created):
     state_score, comparable_weight = compute_weighted_state_score(
         destroyed,
@@ -616,12 +818,7 @@ def match_resource_group(destroyed_resources, created_resources):
     ):
         pass
 
-    ambiguity_reports = build_ambiguity_reports(
-        unmatched_destroyed,
-        unmatched_created,
-    )
-
-    return accepted_matches, unmatched_destroyed, unmatched_created, ambiguity_reports
+    return accepted_matches, unmatched_destroyed, unmatched_created
 
 
 def print_ambiguity_reports(ambiguity_reports):
@@ -658,26 +855,53 @@ def main(plan_path, output_path):
 
     move_commands = []
     best_matches = []
-    unmatched_res_destroy = set()
-    unmatched_res_create = set()
-    ambiguity_reports = []
+    unmatched_destroyed_by_type = {}
+    unmatched_created_by_type = {}
 
     for res_type in sorted(destroyed_by_type.keys()):
         (
             type_matches,
             type_unmatched_destroyed,
             type_unmatched_created,
-            type_ambiguity_reports,
         ) = match_resource_group(
             destroyed_by_type[res_type],
             created_by_type.get(res_type, []),
         )
         best_matches.extend(type_matches)
-        unmatched_res_destroy.update(type_unmatched_destroyed)
-        unmatched_res_create.update(type_unmatched_created)
-        ambiguity_reports.extend(type_ambiguity_reports)
+        unmatched_destroyed_by_type[res_type] = type_unmatched_destroyed
+        unmatched_created_by_type[res_type] = type_unmatched_created
+
+    while accept_context_matches(
+        find_address_context_matches(
+            unmatched_destroyed_by_type,
+            unmatched_created_by_type,
+            best_matches,
+        ),
+        unmatched_destroyed_by_type,
+        unmatched_created_by_type,
+        best_matches,
+    ):
+        pass
+
+    ambiguity_reports = []
+    for res_type in sorted(unmatched_destroyed_by_type):
+        ambiguity_reports.extend(build_ambiguity_reports(
+            unmatched_destroyed_by_type[res_type],
+            unmatched_created_by_type.get(res_type, {}),
+        ))
 
     print_ambiguity_reports(ambiguity_reports)
+
+    unmatched_res_destroy = {
+        address
+        for resources in unmatched_destroyed_by_type.values()
+        for address in resources
+    }
+    unmatched_res_create = {
+        address
+        for resources in unmatched_created_by_type.values()
+        for address in resources
+    }
 
     if len(unmatched_res_create) > 0:
         print("Unmatched Created Resources:")

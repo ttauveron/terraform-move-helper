@@ -669,6 +669,106 @@ def test_main_handles_iam_role_keys_with_nested_square_brackets(tmp_path):
     }
 
 
+def test_main_matches_docker_images_from_matched_module_context(tmp_path):
+    plan_path = write_plan(
+        tmp_path,
+        [
+            resource_change(
+                'module.docker["test-xyz"].docker_container.default',
+                "docker_container",
+                ["delete"],
+                before={"name": "test", "image": "ubuntu:oracular"},
+            ),
+            resource_change(
+                'module.docker["test1-xyz"].docker_container.default',
+                "docker_container",
+                ["delete"],
+                before={"name": "test1", "image": "ubuntu:oracular"},
+            ),
+            resource_change(
+                'module.docker["test"].docker_container.default',
+                "docker_container",
+                ["create"],
+                after={"name": "test", "image": "ubuntu:oracular"},
+            ),
+            resource_change(
+                'module.docker["test1"].docker_container.default',
+                "docker_container",
+                ["create"],
+                after={"name": "test1", "image": "ubuntu:oracular"},
+            ),
+            resource_change(
+                'module.docker["test-xyz"].docker_image.ubuntu',
+                "docker_image",
+                ["delete"],
+                before={
+                    "id": "sha256:abcubuntu:oracular",
+                    "latest": "sha256:abc",
+                    "name": "ubuntu:oracular",
+                    "repo_digest": "ubuntu@sha256:def",
+                },
+            ),
+            resource_change(
+                'module.docker["test1-xyz"].docker_image.ubuntu',
+                "docker_image",
+                ["delete"],
+                before={
+                    "id": "sha256:abcubuntu:oracular",
+                    "latest": "sha256:abc",
+                    "name": "ubuntu:oracular",
+                    "repo_digest": "ubuntu@sha256:def",
+                },
+            ),
+            resource_change(
+                'module.docker["test"].docker_image.ubuntu',
+                "docker_image",
+                ["create"],
+                after={"name": "ubuntu:oracular"},
+            ),
+            resource_change(
+                'module.docker["test1"].docker_image.ubuntu',
+                "docker_image",
+                ["create"],
+                after={"name": "ubuntu:oracular"},
+            ),
+        ],
+    )
+    output_path = tmp_path / "move_commands.sh"
+
+    terraform_move_helper.main(str(plan_path), str(output_path))
+
+    assert parsed_command_set(output_path) == {
+        (
+            "terraform",
+            "state",
+            "mv",
+            'module.docker["test-xyz"].docker_container.default',
+            'module.docker["test"].docker_container.default',
+        ),
+        (
+            "terraform",
+            "state",
+            "mv",
+            'module.docker["test1-xyz"].docker_container.default',
+            'module.docker["test1"].docker_container.default',
+        ),
+        (
+            "terraform",
+            "state",
+            "mv",
+            'module.docker["test-xyz"].docker_image.ubuntu',
+            'module.docker["test"].docker_image.ubuntu',
+        ),
+        (
+            "terraform",
+            "state",
+            "mv",
+            'module.docker["test1-xyz"].docker_image.ubuntu',
+            'module.docker["test1"].docker_image.ubuntu',
+        ),
+    }
+
+
 def test_main_reports_ambiguous_matches_without_generating_commands(
     tmp_path,
     capsys,
