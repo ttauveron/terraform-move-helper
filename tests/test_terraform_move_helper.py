@@ -1,17 +1,9 @@
-import importlib.util
 import json
 import shlex
-from pathlib import Path
 
 import pytest
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = PROJECT_ROOT / "terraform-move-helper.py"
-
-spec = importlib.util.spec_from_file_location("terraform_move_helper", MODULE_PATH)
-terraform_move_helper = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(terraform_move_helper)
+import terraform_move_helper
 
 
 def resource_change(address, resource_type, actions, before=None, after=None):
@@ -205,6 +197,112 @@ def test_main_does_not_write_command_for_low_confidence_match(tmp_path, capsys):
     assert " - local_file.new" in output
     assert "Unmatched Destroyed Resources:" in output
     assert " - local_file.old" in output
+
+
+def test_find_scored_matches_uses_global_assignment(monkeypatch):
+    destroyed_a = terraform_move_helper.PreparedResource(
+        address="local_file.a_old",
+        resource_type="local_file",
+        flat_state={},
+        identity_values=(),
+        fingerprint=(),
+        fingerprint_weight=0.0,
+    )
+    destroyed_b = terraform_move_helper.PreparedResource(
+        address="local_file.b_old",
+        resource_type="local_file",
+        flat_state={},
+        identity_values=(),
+        fingerprint=(),
+        fingerprint_weight=0.0,
+    )
+    created_x = terraform_move_helper.PreparedResource(
+        address="local_file.x_new",
+        resource_type="local_file",
+        flat_state={},
+        identity_values=(),
+        fingerprint=(),
+        fingerprint_weight=0.0,
+    )
+    created_y = terraform_move_helper.PreparedResource(
+        address="local_file.y_new",
+        resource_type="local_file",
+        flat_state={},
+        identity_values=(),
+        fingerprint=(),
+        fingerprint_weight=0.0,
+    )
+    scores = {
+        ("local_file.a_old", "local_file.x_new"): 0.90,
+        ("local_file.a_old", "local_file.y_new"): 0.88,
+        ("local_file.b_old", "local_file.x_new"): 0.89,
+        ("local_file.b_old", "local_file.y_new"): 0.10,
+    }
+
+    def build_candidate(destroyed, created):
+        score = scores[(destroyed.address, created.address)]
+        return terraform_move_helper.CandidateMatch(
+            destroyed=destroyed,
+            created=created,
+            state_score=score,
+            address_score=score,
+            final_score=score,
+            comparable_weight=2.0,
+        )
+
+    monkeypatch.setattr(terraform_move_helper, "build_candidate", build_candidate)
+
+    matches = terraform_move_helper.find_scored_matches(
+        {
+            destroyed_a.address: destroyed_a,
+            destroyed_b.address: destroyed_b,
+        },
+        {
+            created_x.address: created_x,
+            created_y.address: created_y,
+        },
+    )
+
+    assert {
+        (destroyed.address, created.address)
+        for destroyed, created, _score, _reason in matches
+    } == {
+        ("local_file.a_old", "local_file.y_new"),
+        ("local_file.b_old", "local_file.x_new"),
+    }
+
+
+def test_main_prints_matches_with_scores(tmp_path, capsys):
+    plan_path = write_plan(
+        tmp_path,
+        [
+            resource_change(
+                "aws_s3_bucket.old",
+                "aws_s3_bucket",
+                ["delete"],
+                before={"bucket": "prod-assets"},
+            ),
+            resource_change(
+                "module.storage.aws_s3_bucket.assets",
+                "aws_s3_bucket",
+                ["create"],
+                after={"bucket": "prod-assets"},
+            ),
+        ],
+    )
+    output_path = tmp_path / "move_commands.sh"
+
+    terraform_move_helper.main(str(plan_path), str(output_path))
+
+    output = capsys.readouterr().out
+    assert "Matched Resources:" in output
+    assert "Matched Destroyed Resource: aws_s3_bucket.old" in output
+    assert (
+        "With Created Resource: module.storage.aws_s3_bucket.assets"
+        in output
+    )
+    assert "Total Similarity Score: 1.00" in output
+    assert "Match Reason: exact fingerprint" in output
 
 
 def test_main_rejects_destroyed_resource_without_created_match(tmp_path, capsys):

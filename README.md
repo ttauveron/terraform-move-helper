@@ -127,7 +127,7 @@ terraform-move-helper processes a Terraform plan in JSON format, matches destroy
 To use terraform-move-helper, run the following command:
 
 ```bash
-uv run python terraform-move-helper.py --plan <path_to_tfplan.json> --output <output_file>
+uv run terraform-move-helper --plan <path_to_tfplan.json> --output <output_file>
 ```
 
 To generate the tfplan.json file, run the following command in your terraform project:
@@ -139,7 +139,7 @@ terraform plan -out=tfplan && terraform show -json tfplan | jq > tfplan.json
 ### Example
 
 ```bash
-uv run python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
+uv run terraform-move-helper --plan tfplan.json --output move_commands.sh
 ```
 
 This will:
@@ -212,7 +212,7 @@ To test the functionality manually with sample data:
 2. Run terraform-move-helper with the sample plan:
 
     ```bash
-    uv run python terraform-move-helper.py --plan tfplan.json --output move_commands.sh
+    uv run terraform-move-helper --plan tfplan.json --output move_commands.sh
     ```
 
 ### Contributing

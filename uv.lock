@@ -229,7 +229,7 @@ wheels = [
 [[package]]
 name = "terraform-move-helper"
 version = "0.0.1"
-source = { virtual = "." }
+source = { editable = "." }
 
 [package.dev-dependencies]
 build = [
@@ -243,8 +243,8 @@ dev = [
 [package.metadata]
 
 [package.metadata.requires-dev]
-build = [{ name = "pyinstaller" }]
-dev = [{ name = "pytest" }]
+build = [{ name = "pyinstaller", specifier = ">=6,<7" }]
+dev = [{ name = "pytest", specifier = ">=8,<10" }]
 
 [[package]]
 name = "tomli"
