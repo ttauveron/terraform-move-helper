@@ -3,6 +3,8 @@ import json
 import shlex
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "terraform-move-helper.py"
@@ -132,7 +134,7 @@ def test_main_writes_terraform_state_mv_command(tmp_path, capsys):
     assert "Terraform move commands have been written" in capsys.readouterr().out
 
 
-def test_main_reports_destroyed_resource_without_created_match(tmp_path, capsys):
+def test_main_rejects_destroyed_resource_without_created_match(tmp_path, capsys):
     plan_path = write_plan(
         tmp_path,
         [
@@ -146,15 +148,19 @@ def test_main_reports_destroyed_resource_without_created_match(tmp_path, capsys)
     )
     output_path = tmp_path / "move_commands.sh"
 
-    terraform_move_helper.main(str(plan_path), str(output_path))
+    with pytest.raises(SystemExit) as exc_info:
+        terraform_move_helper.main(str(plan_path), str(output_path))
 
-    assert output_path.read_text() == ""
+    assert exc_info.value.code == 1
+    assert not output_path.exists()
     output = capsys.readouterr().out
-    assert "Unmatched Destroyed Resources:" in output
-    assert " - aws_s3_bucket.old" in output
+    assert "Error: Mismatch for resource type 'aws_s3_bucket'" in output
+    assert "  Destroyed: 1 resource(s)" in output
+    assert "  Created: 0 resource(s)" in output
+    assert "Cannot proceed with matching because the numbers don't match." in output
 
 
-def test_main_reports_mismatch_when_destroyed_count_exceeds_created_count(
+def test_main_rejects_mismatch_when_destroyed_count_exceeds_created_count(
     tmp_path,
     capsys,
 ):
@@ -183,26 +189,19 @@ def test_main_reports_mismatch_when_destroyed_count_exceeds_created_count(
     )
     output_path = tmp_path / "move_commands.sh"
 
-    terraform_move_helper.main(str(plan_path), str(output_path))
+    with pytest.raises(SystemExit) as exc_info:
+        terraform_move_helper.main(str(plan_path), str(output_path))
 
-    parsed_commands = [
-        shlex.split(command) for command in output_commands(output_path)
-    ]
-    assert parsed_commands == [
-        [
-            "terraform",
-            "state",
-            "mv",
-            "aws_s3_bucket.assets_old",
-            "module.storage.aws_s3_bucket.assets",
-        ]
-    ]
+    assert exc_info.value.code == 1
+    assert not output_path.exists()
     output = capsys.readouterr().out
-    assert "Unmatched Destroyed Resources:" in output
-    assert " - aws_s3_bucket.logs_old" in output
+    assert "Error: Mismatch for resource type 'aws_s3_bucket'" in output
+    assert "  Destroyed: 2 resource(s)" in output
+    assert "  Created: 1 resource(s)" in output
+    assert "Cannot proceed with matching because the numbers don't match." in output
 
 
-def test_main_reports_created_resource_type_without_destroyed_counterpart(
+def test_main_rejects_created_resource_type_without_destroyed_counterpart(
     tmp_path,
     capsys,
 ):
@@ -231,11 +230,16 @@ def test_main_reports_created_resource_type_without_destroyed_counterpart(
     )
     output_path = tmp_path / "move_commands.sh"
 
-    terraform_move_helper.main(str(plan_path), str(output_path))
+    with pytest.raises(SystemExit) as exc_info:
+        terraform_move_helper.main(str(plan_path), str(output_path))
 
+    assert exc_info.value.code == 1
+    assert not output_path.exists()
     output = capsys.readouterr().out
-    assert "Unmatched Created Resources:" in output
-    assert " - aws_iam_role.new" in output
+    assert "Error: Mismatch for resource type 'aws_iam_role'" in output
+    assert "  Destroyed: 0 resource(s)" in output
+    assert "  Created: 1 resource(s)" in output
+    assert "Cannot proceed with matching because the numbers don't match." in output
 
 
 def test_main_matches_similar_for_each_addresses_with_square_brackets(tmp_path):

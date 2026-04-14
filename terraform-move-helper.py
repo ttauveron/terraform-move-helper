@@ -115,6 +115,28 @@ def build_state_mv_command(source_address, destination_address):
     )
 
 
+def validate_resource_type_counts(destroyed_by_type, created_by_type):
+    resource_types = sorted(set(destroyed_by_type) | set(created_by_type))
+    mismatches = []
+
+    for res_type in resource_types:
+        destroyed_count = len(destroyed_by_type.get(res_type, []))
+        created_count = len(created_by_type.get(res_type, []))
+
+        if destroyed_count != created_count:
+            mismatches.append((res_type, destroyed_count, created_count))
+
+    if not mismatches:
+        return
+
+    for res_type, destroyed_count, created_count in mismatches:
+        print(f"Error: Mismatch for resource type '{res_type}'")
+        print(f"  Destroyed: {destroyed_count} resource(s)")
+        print(f"  Created: {created_count} resource(s)")
+    print("Cannot proceed with matching because the numbers don't match.")
+    raise SystemExit(1)
+
+
 def main(plan_path, output_path):
     plan = load_plan(plan_path)
     resource_changes = get_resource_changes(plan)
@@ -128,6 +150,8 @@ def main(plan_path, output_path):
     created_by_type = defaultdict(list)
     for res in created_resources:
         created_by_type[res['type']].append(res)
+
+    validate_resource_type_counts(destroyed_by_type, created_by_type)
 
     # Initialize list to store move commands
     move_commands = []
